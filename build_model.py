@@ -72,7 +72,7 @@ class Encoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        x = torch.tensor(x, dtype=torch.long)
+        # x = torch.tensor(x, dtype=torch.long)
         x = self.embedding(x) + self.positional_encoding[:, :x.size(1), :]
         x = self.dropout(x)
         for layer in self.layers:
@@ -108,7 +108,7 @@ class Decoder(nn.Module):
         self.output_linear = nn.Linear(d_model, vocab_size)
 
     def forward(self, x, enc_output, src_mask=None, tgt_mask=None):
-        x = torch.tensor(x, dtype=torch.long)
+        # x = torch.tensor(x, dtype=torch.long)
         x = self.embedding(x) + self.positional_encoding[:, :x.size(1), :]
         x = self.dropout(x)
         for layer in self.layers:
