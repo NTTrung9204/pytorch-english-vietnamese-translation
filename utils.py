@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score
 
 def build_vocab(file_path, max_len=10000):
     with open(file_path, 'r', encoding='utf-8') as f:
-        sentences = f.readlines()[:10000]
+        sentences = f.readlines()
 
     all_words = []
     for index, sentence in enumerate(sentences):
@@ -80,6 +80,7 @@ def train(model, train_loader, valid_loader, criterion, optimizer, device, pad_t
 
         print(f"\nEpoch [{epoch + 1:2d}/{num_epochs}], Avg Loss: {avg_train_loss:.4f}, Val Loss: {valid_loss:.4f}, Val Acc: {valid_accuracy:.4f}")
 
+    return train_losses, valid_accuracies, valid_losses
 
 def evaluate(model, valid_loader, criterion, device, pad_token_id):
     """
@@ -94,31 +95,37 @@ def evaluate(model, valid_loader, criterion, device, pad_token_id):
     
     with torch.no_grad():
         for batch in valid_loader:
+            # Giả sử mỗi batch: encoder_input, decoder_target có shape [batch, seq_len]
             encoder_input, decoder_target = batch
             encoder_input = encoder_input.to(device)
             decoder_target = decoder_target.to(device)
             
-            tgt_input = decoder_target[:, :-1]
-            tgt_out   = decoder_target[:, 1:]
+            # Tách teacher forcing:
+            # tgt_input: toàn bộ chuỗi ngoại trừ token cuối
+            # tgt_out: toàn bộ chuỗi ngoại trừ token đầu (sẽ so sánh dự đoán cho mỗi bước)
+            tgt_input = decoder_target[:, :-1]  # shape: [batch, seq_len-1]
+            tgt_out   = decoder_target[:, 1:]    # shape: [batch, seq_len-1]
             
-            src = encoder_input.transpose(0, 1)  # [src_seq_len, batch]
-            tgt = tgt_input.transpose(0, 1)        # [tgt_seq_len, batch]
-            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt, device, pad_token_id)
+            # Tạo mask dựa trên dữ liệu có shape [batch, seq_len]
+            # Lưu ý: create_mask phải được định nghĩa để nhận đầu vào dạng [batch, seq_len]
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(encoder_input, tgt_input, device, pad_token_id)
             
-            outputs = model(src, tgt, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask)
-            tgt_out = tgt_out.transpose(0, 1)       # [tgt_seq_len, batch]
+            # Gọi model với dữ liệu có shape [batch, seq_len] (không transpose)
+            outputs = model(encoder_input, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask)
+            # outputs có shape: [batch, seq_len-1, vocab_size]
             
             loss = criterion(outputs.reshape(-1, outputs.shape[-1]), tgt_out.reshape(-1))
             running_loss += loss.item()
             
-            # Dự đoán: lấy argmax theo chiều từ vocab
-            _, predicted = torch.max(outputs, dim=-1)  # shape: [tgt_seq_len, batch]
+            # Dự đoán: lấy argmax theo chiều vocab, kết quả có shape [batch, seq_len-1]
+            _, predicted = torch.max(outputs, dim=-1)
             all_preds.extend(predicted.reshape(-1).cpu().numpy())
             all_labels.extend(tgt_out.reshape(-1).cpu().numpy())
     
     accuracy = accuracy_score(all_labels, all_preds)
     avg_valid_loss = running_loss / len(valid_loader)
     return accuracy, avg_valid_loss
+
 
 
 def generate_square_subsequent_mask(sz, DEVICE):
