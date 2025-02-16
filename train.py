@@ -1,6 +1,6 @@
 import torch
 from utils import build_vocab, train, evaluate
-from Dataset import TranslationStepDataset
+from Dataset import TranslationDatasetFull
 from build_model import Transformer
 from torchsummary import summary
 from torch.utils.data import Dataset, DataLoader, random_split
@@ -14,14 +14,14 @@ if __name__ == "__main__":
     BATCH = 32
     NUM_EPOCHS = 10
     DIM_MODEL = 512
-    LEARNING_RATE = 0.01
+    LEARNING_RATE = 0.0001
 
-    en_vocab = build_vocab(EN_FILE_PATH, max_len=10000)
-    vi_vocab = build_vocab(VI_FILE_PATH, max_len=10000)
+    en_vocab = build_vocab(EN_FILE_PATH, max_len=5000)
+    vi_vocab = build_vocab(VI_FILE_PATH, max_len=5000)
     
     N_HEADS = 8
-    N_LAYERS = 6
-    D_FF = 2048
+    N_LAYERS = 4
+    D_FF = 512
     EN_VOCAB_SIZE = len(en_vocab) 
     VI_VOCAB_SIZE = len(vi_vocab) 
     DROPOUT = 0.1
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset = TranslationStepDataset(EN_FILE_PATH, VI_FILE_PATH, en_vocab, vi_vocab, max_len=50)
+    dataset = TranslationDatasetFull(EN_FILE_PATH, VI_FILE_PATH, en_vocab, vi_vocab, max_len=50)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
     train_size = int(0.8 * len(dataset))
@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     criterion = nn.CrossEntropyLoss()
 
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, betas=(0.9, 0.98))
 
     train_losses, valid_accuracies, valid_losses = train(model, train_dataloader, val_dataloader, criterion, optimizer, device, PAD_TOKEN_ID, NUM_EPOCHS)
 
