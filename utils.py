@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score
 
 def build_vocab(file_path, max_len=10000):
     with open(file_path, 'r', encoding='utf-8') as f:
-        sentences = f.readlines()
+        sentences = f.readlines()[:10000]
 
     all_words = []
     for index, sentence in enumerate(sentences):
@@ -28,13 +28,12 @@ def build_vocab(file_path, max_len=10000):
 
 def train(model, train_loader, valid_loader, criterion, optimizer, device, pad_token_id, num_epochs=10):
     """
-    model: Transformer model nhận vào (encoder_input, decoder_input)
-    train_loader, valid_loader: DataLoader của dataset huấn luyện và validation (mỗi mẫu là (encoder_input, decoder_input, target))
-    criterion: hàm loss
-    optimizer: optimizer của model
-    device: thiết bị chạy (cpu hoặc cuda)
-    pad_token_id: id của token <pad> (để xác định độ dài thực của decoder input)
-    num_epochs: số epoch huấn luyện
+    Mỗi sample trong DataLoader trả về: (encoder_input, decoder_target) với shape [batch, seq_len].
+    Trong đó decoder_target là chuỗi đầy đủ: [<seqstart>, token1, token2, ..., <seqend>].
+    
+    Chúng ta sử dụng teacher forcing:
+      - tgt_input = decoder_target[:, :-1]
+      - tgt_out   = decoder_target[:, 1:]
     """
     train_losses = []
     valid_accuracies = []
@@ -46,29 +45,30 @@ def train(model, train_loader, valid_loader, criterion, optimizer, device, pad_t
         total_batches = len(train_loader)
         
         for batch_idx, batch in enumerate(train_loader):
-            # Mỗi batch có 3 phần: encoder_input, decoder_input, target
-            encoder_input, decoder_input, target = batch
+            # Mỗi batch: encoder_input, decoder_target (shape: [batch, seq_len])
+            encoder_input, decoder_target = batch
             encoder_input = encoder_input.to(device)
-            decoder_input = decoder_input.to(device)
-            target = target.to(device).long()
+            decoder_target = decoder_target.to(device).long()
+            
+            # Tách teacher forcing:
+            tgt_input = decoder_target[:, :-1]  # [batch, seq_len-1]
+            tgt_out   = decoder_target[:, 1:]    # [batch, seq_len-1]
+            
+            # Tạo mask dựa trên input có shape [batch, seq_len]
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(encoder_input, tgt_input, device, pad_token_id)
             
             optimizer.zero_grad()
 
-            # Forward: model nhận (src, tgt) và trả về logits có shape (batch, max_len, vocab_size)
-            outputs = model(encoder_input, decoder_input)
-            # Tính độ dài thực của decoder_input (số token khác pad)
-            dec_lengths = (decoder_input != pad_token_id).sum(dim=1)
-            # Lấy logits tại vị trí cuối (tương ứng với token cần dự đoán)
-            batch_indices = torch.arange(outputs.size(0), device=device)
-            # Vì dec_lengths là số token của prefix, nên vị trí cần dự đoán là dec_lengths - 1
-            last_token_logits = outputs[batch_indices, dec_lengths - 1, :]  # shape: (batch, vocab_size)
+            # Forward: model nhận (encoder_input, tgt_input) và các mask, trả về logits với shape [batch, tgt_seq_len, vocab_size]
+            outputs = model(encoder_input, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask)
             
-            loss = criterion(last_token_logits, target)
+            # Tính loss: reshape outputs và tgt_out thành vector 1 chiều
+            loss = criterion(outputs.reshape(-1, outputs.shape[-1]), tgt_out.reshape(-1))
             loss.backward()
             optimizer.step()
 
             running_loss += loss.item()
-            sys.stdout.write(f"\rEpoch [{epoch + 1:4d}/{num_epochs}] Batch [{batch_idx + 1}/{total_batches}], Loss: {loss.item():.4f}")
+            sys.stdout.write(f"\rEpoch [{epoch + 1:2d}/{num_epochs}] Batch [{batch_idx + 1}/{total_batches}], Loss: {loss.item():.4f}")
             sys.stdout.flush()
 
         avg_train_loss = running_loss / total_batches
@@ -78,39 +78,61 @@ def train(model, train_loader, valid_loader, criterion, optimizer, device, pad_t
         valid_accuracies.append(valid_accuracy)
         valid_losses.append(valid_loss)
 
-        print(f"\nEpoch [{epoch + 1:4d}/{num_epochs}], Avg Loss: {avg_train_loss:.4f}, Validation Accuracy: {valid_accuracy:.4f}, Validation Loss: {valid_loss:.4f}")
+        print(f"\nEpoch [{epoch + 1:2d}/{num_epochs}], Avg Loss: {avg_train_loss:.4f}, Val Loss: {valid_loss:.4f}, Val Acc: {valid_accuracy:.4f}")
 
-    return train_losses, valid_accuracies, valid_losses
 
 def evaluate(model, valid_loader, criterion, device, pad_token_id):
     """
-    Tương tự như train, evaluate chạy trên validation set để tính loss và accuracy.
-    Mỗi batch gồm (encoder_input, decoder_input, target). Ta lấy logits tại vị trí cuối cùng của decoder_input.
+    evaluate chạy trên validation set để tính loss và accuracy.
+    Mỗi batch trả về: encoder_input, decoder_target với shape [batch, seq_len].
+    Chúng ta tách teacher forcing (tgt_input và tgt_out) và tạo mask.
     """
     model.eval()
     all_preds = []
     all_labels = []
     running_loss = 0.0
-
+    
     with torch.no_grad():
         for batch in valid_loader:
-            encoder_input, decoder_input, target = batch
+            encoder_input, decoder_target = batch
             encoder_input = encoder_input.to(device)
-            decoder_input = decoder_input.to(device)
-            target = target.to(device).long()
-
-            outputs = model(encoder_input, decoder_input)
-            dec_lengths = (decoder_input != pad_token_id).sum(dim=1)
-            batch_indices = torch.arange(outputs.size(0), device=device)
-            last_token_logits = outputs[batch_indices, dec_lengths - 1, :]  # shape: (batch, vocab_size)
-
-            loss = criterion(last_token_logits, target)
+            decoder_target = decoder_target.to(device)
+            
+            tgt_input = decoder_target[:, :-1]
+            tgt_out   = decoder_target[:, 1:]
+            
+            src = encoder_input.transpose(0, 1)  # [src_seq_len, batch]
+            tgt = tgt_input.transpose(0, 1)        # [tgt_seq_len, batch]
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt, device, pad_token_id)
+            
+            outputs = model(src, tgt, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask)
+            tgt_out = tgt_out.transpose(0, 1)       # [tgt_seq_len, batch]
+            
+            loss = criterion(outputs.reshape(-1, outputs.shape[-1]), tgt_out.reshape(-1))
             running_loss += loss.item()
-
-            _, predicted = torch.max(last_token_logits, dim=1)
-            all_preds.extend(predicted.cpu().numpy())
-            all_labels.extend(target.cpu().numpy())
-
+            
+            # Dự đoán: lấy argmax theo chiều từ vocab
+            _, predicted = torch.max(outputs, dim=-1)  # shape: [tgt_seq_len, batch]
+            all_preds.extend(predicted.reshape(-1).cpu().numpy())
+            all_labels.extend(tgt_out.reshape(-1).cpu().numpy())
+    
     accuracy = accuracy_score(all_labels, all_preds)
     avg_valid_loss = running_loss / len(valid_loader)
     return accuracy, avg_valid_loss
+
+
+def generate_square_subsequent_mask(sz, DEVICE):
+    mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
+    mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    return mask
+
+def create_mask(src, tgt, DEVICE, PAD_IDX):
+    src_seq_len = src.shape[1]
+    tgt_seq_len = tgt.shape[1]
+
+    tgt_mask = generate_square_subsequent_mask(tgt_seq_len, DEVICE)
+    src_mask = torch.zeros((src_seq_len, src_seq_len), device=DEVICE).type(torch.bool)
+
+    src_padding_mask = (src == PAD_IDX)
+    tgt_padding_mask = (tgt == PAD_IDX)
+    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
