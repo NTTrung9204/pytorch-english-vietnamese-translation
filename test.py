@@ -1,29 +1,65 @@
 from utils import build_vocab
-from Dataset import TranslationDataset
+from Dataset import TranslationStepDataset
 from build_model import Transformer
 from torchsummary import summary
+from torch.utils.data import Dataset, DataLoader
 
 
-en_vocab = build_vocab('dataset/en_sents', max_len=10000)
-vi_vocab = build_vocab('dataset/vi_sents', max_len=10000)
-
-# dataset = TranslationDataset('dataset/en_sents', 'dataset/vi_sents', en_vocab, vi_vocab, max_len=50)
+# dataset = TranslationStepDataset('dataset/en_sents', 'dataset/vi_sents', en_vocab, vi_vocab, max_len=50)
 
 # print(dataset[0])
 # print(dataset[1])
 
-# Tham số mô hình
-d_model = 512
-n_heads = 8
-n_layers = 6
-d_ff = 2048
-en_vocab_size = len(en_vocab) 
-vi_vocab_size = len(vi_vocab) 
-dropout = 0.1
 
-model = Transformer(en_vocab_size, vi_vocab_size, d_model, n_heads, n_layers, d_ff, dropout)
+# Ví dụ cách sử dụng:
+if __name__ == "__main__":
+    en_file = "dataset/en_sents"
+    vi_file = "dataset/vi_sents"
 
-summary(model, [(50,), (50,)], device="cpu")
+    en_vocab = build_vocab(en_file, max_len=10000)
+    vi_vocab = build_vocab(vi_file, max_len=10000)
+
+    # print(vi_vocab)
+
+    dataset = TranslationStepDataset(en_file, vi_file, en_vocab, vi_vocab, max_len=50)
+
+    print(len(dataset))
+
+    inv_vi_vocab = {id: token for token, id in vi_vocab.items()}
+
+    for batch in dataset:
+        encoder_input, decoder_input, target = batch
+        print(encoder_input)
+        print(decoder_input)
+        print(inv_vi_vocab[target.item()])
+    # dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    # # Lấy 1 batch và in ra các tensor
+    # for batch in dataloader:
+    #     src, dec_input, target = batch
+    #     print("Encoder input shape:", src.shape)       # (batch_size, max_len)
+    #     print("Decoder input shape:", dec_input.shape)   # (batch_size, max_len)
+    #     print("Target shape:", target.shape)             # (batch_size,)
+    #     # In vài mẫu kiểm tra:
+    #     for i in range(min(3, src.size(0))):
+    #         print("Encoder:", src[i].tolist())
+    #         print("Decoder input:", dec_input[i].tolist())
+    #         print("Target:", target[i].item())
+    #         print("-----")
+    #     break
+
+# # Tham số mô hình
+# d_model = 512
+# n_heads = 8
+# n_layers = 6
+# d_ff = 2048
+# en_vocab_size = len(en_vocab) 
+# vi_vocab_size = len(vi_vocab) 
+# dropout = 0.1
+
+# model = Transformer(en_vocab_size, vi_vocab_size, d_model, n_heads, n_layers, d_ff, dropout)
+
+# summary(model, [(50,), (50,)], device="cpu")
 
 # ----------------------------------------------------------------
 #         Layer (type)               Output Shape         Param #
